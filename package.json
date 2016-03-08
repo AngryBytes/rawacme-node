@@ -1,0 +1,32 @@
+{
+  "name": "rawacme",
+  "version": "0.1.0",
+  "description": "Library for making raw ACME requests",
+  "authors": "Angry Bytes <info@angrybytes.com>",
+  "keywords": [
+      "acme", "letsencrypt"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:AngryBytes/rawacme-node.git"
+  },
+  "dependencies": {
+    "base64url": "^1.0.6",
+    "pem-jwk": "^1.5.1",
+    "request": "^2.69.0"
+  },
+  "devDependencies": {
+    "eslint": "^2.3.0"
+  },
+  "main": "./index.js",
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "eslintConfig": {
+    "extends": "eslint:recommended",
+    "env": {
+      "es6": true,
+      "node": true
+    }
+  }
+}
