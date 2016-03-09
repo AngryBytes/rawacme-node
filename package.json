@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Library for making raw ACME requests",
   "authors": "Angry Bytes <info@angrybytes.com>",
+  "license" : "MIT",
   "keywords": [
       "acme", "letsencrypt"
   ],
