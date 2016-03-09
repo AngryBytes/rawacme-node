@@ -1,6 +1,6 @@
 {
   "name": "rawacme",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Library for making raw ACME requests",
   "authors": "Angry Bytes <info@angrybytes.com>",
   "license" : "MIT",
