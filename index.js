@@ -31,15 +31,6 @@ exports.toDer = (pem) => {
     );
 };
 
-// Convert a PEM certificate to PEM.
-exports.certFromDer = (der) => {
-    return (
-        '-----BEGIN CERTIFICATE-----\n' +
-        der.toString('base64').match(/.{1,64}/g).join('\n') +
-        '\n-----END CERTIFICATE-----\n'
-    );
-};
-
 // Create a JWK object from an RSA public key.
 // This method is useful during account registration.
 exports.jwk = pemjwk.pem2jwk;
