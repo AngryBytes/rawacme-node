@@ -1,11 +1,12 @@
 {
   "name": "rawacme",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Library for making raw ACME requests",
   "authors": "Angry Bytes <info@angrybytes.com>",
-  "license" : "MIT",
+  "license": "MIT",
   "keywords": [
-      "acme", "letsencrypt"
+    "acme",
+    "letsencrypt"
   ],
   "repository": {
     "type": "git",
