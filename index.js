@@ -304,10 +304,12 @@ class Client {
 // Basically a version of request with the `url` argument bound, and sets
 // `resource` on the body for you.
 const createMethod = (resource, url) => {
-    return function(body, params, callback) {
+    const method = function(body, params, callback) {
         body.resource = resource;
         return this.post(url, body, params, callback);
     };
+    method.url = url;
+    return method;
 };
 
 // Create a client instance, returned in the callback.
