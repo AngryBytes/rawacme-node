@@ -12,10 +12,11 @@
     "type": "git",
     "url": "git@github.com:AngryBytes/rawacme-node.git"
   },
+  "main": "dist/index.js",
   "dependencies": {
     "base64url": "^3.0.1",
-    "pem-jwk": "^2.0.0",
-    "request": "^2.69.0"
+    "cross-fetch": "^3.0.4",
+    "pem-jwk": "^2.0.0"
   },
   "devDependencies": {
     "@types/node": "^12.6.3",
@@ -26,6 +27,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "fmt": "prettier --write ./src/*.ts ./*.{json,md}"
+    "watch": "tsc -w",
+    "fmt": "prettier --write ./src/*.ts ./*.{js,json,md}"
   }
 }

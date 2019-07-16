@@ -10,39 +10,42 @@ details, but provides only functions to ease making the ACME API calls.
 ```js
 const rawacme = require('rawacme');
 
-/* Create client, request directory */
-rawacme.createClient({
-    /* ACME directory URL */
-    url: rawacme.LETSENCRYPT_STAGING_URL,
-    /* For production, use: rawacme.LETSENCRYPT_URL */
-
-    /* Account keypair as PEM strings */
-    publicKey: /* ... */,
-    privateKey: /* ... */
-}, function(err, client) {
-    /* Error handling code here */
-
-    /* Directory resources are available as methods.
-     * For example, to create a registration: */
-    client.newReg({
-        /* For directory methods, resource is set for you */
-        contact: ['mailto:john@example.com']
-    }, function(err, res) {
-        /* Error handling code here */
-
-        /* res.body is parsed JSON, or a buffer */
-    });
-
-    /* Other times, you need to request a non-directory URL.
-     * The client has get and post methods. */
-    client.get(url, function(err, res) { /* ... */ });
-    client.post(url, body, function(err, res) { /* ... */ });
-
-    /* For GET requests that can return 202 with Retry-After, the poll method
-     * keeps retrying until the response settles. */
-    client.poll(url, function(err, res) { /* ... */ });
+// Create a client for the Let's Encrypt staging environment.
+const client = await rawacme.createClient(rawacme.LETSENCRYPT_STAGING_URL, {
+  // Account keypair as PEM strings
+  publicKey: /* ... */,
+  privateKey: /* ... */
 });
+
+// Directory resources are available as methods on `client.resources`.
+// For example, to create an account:
+const res = await client.resources.newAccount({
+  termsOfServiceAgreed: true,
+  contact: ["mailto:john@example.com"]
+});
+
+// Other times, you may need to request a non-directory URL.
+// The `request` method does a POST request:
+const res = await client.request(url, {
+  body: { /* ... */ }
+});
+
+// For POST-as-GET requests that can return `202` with `Retry-After`, the
+// `poll` method keeps retrying until the response settles.
+const res = client.poll(url);
 ```
+
+All of the above responses are `Response` instances from the Fetch API,
+documented at: https://developer.mozilla.org/en-US/docs/Web/API/Response
+
+Also see [./test.js] for more examples.
+
+### Testing
+
+For testing, use Pebble: https://github.com/letsencrypt/pebble
+
+The included [./test.js] script should work as-is when starting Pebble with
+`docker-compose`, as outlined in the README there.
 
 ### License
 

@@ -1,19 +1,13 @@
-import crypto from "crypto";
-import pemjwk, { RSA_JWK } from "pem-jwk";
-import request, { Request, Response } from "request";
 import base64url from "base64url";
+import crypto, { KeyLike } from "crypto";
+import fetch from "cross-fetch";
+import pemjwk, { RSA_JWK } from "pem-jwk";
 
 /// Re-export of the `base64url` module.
 export const base64 = base64url;
 
-/// JWS algorithms we support.
-export type JwsAlg = "RS256";
-
 /// The types of PEM headers we support.
 export type PemHeader = "RSA PUBLIC KEY" | "RSA PRIVATE KEY" | "CERTIFICATE";
-
-/// Callback signature for returning a response.
-export type ResponseCallback = (error: any, response: Response) => void;
 
 /// Convert DER buffer to PEM string.
 export const fromDer = (header: PemHeader, der: Buffer): string => {
@@ -39,17 +33,26 @@ export const toDer = (pem: string): Buffer => {
     .filter(line => line)
     .slice(1, -1)
     .join("");
-  return new Buffer(base64, "base64");
+  return Buffer.from(base64, "base64");
 };
 
-/// Create a JWK object from an RSA public key.
-/// This function is useful during account registration.
-export const jwk = pemjwk.pem2jwk;
+/// Create a JWK public key object from an RSA public or private key.
+export const jwk = (key: KeyLike): RSA_JWK => {
+  const publicKey = crypto.createPublicKey(key);
+  const pem = publicKey.export({ format: "pem", type: "pkcs1" });
+  return pemjwk.pem2jwk(<string>pem);
+};
 
-/// Create a JWK SHA-256 thumbprint from an RSA public key.
-/// This function is useful during account key roll-over.
-export const jwkThumbprint = (publicKey: string): Buffer => {
-  // We must guarantee order of properties when hashing here.
+/// Create a JWK SHA-256 thumbprint from an RSA public or private key.
+///
+/// This function is useful for responding to challenges.
+export const jwkThumbprint = (key: KeyLike): Buffer => {
+  const publicKey = crypto.createPublicKey(key);
+  if (publicKey.asymmetricKeyType !== "rsa") {
+    throw Error("Only RSA keys are supported");
+  }
+
+  // We must guarantee the order of properties when hashing here.
   const { e, kty, n } = jwk(publicKey);
   const json = `{"e":"${e}","kty":"${kty}","n":"${n}"}`;
 
@@ -58,14 +61,16 @@ export const jwkThumbprint = (publicKey: string): Buffer => {
   return hasher.digest();
 };
 
-/// Create a key authorization from a token and RSA public key.
+/// Create a key authorization from a token and RSA public or private key.
+///
 /// This function is useful for responding to challenges.
-export const keyAuthz = (token: string, publicKey: string): string => {
-  const thumbprint = jwkThumbprint(publicKey);
+export const keyAuthz = (token: string, key: KeyLike): string => {
+  const thumbprint = jwkThumbprint(key);
   return token + "." + base64url.encode(thumbprint);
 };
 
 /// Create a base64 SHA-256 of the key authorization.
+///
 /// This function is useful for responding to a dns-01 challenge.
 export const dnsKeyAuthzHash = (keyAuthz: string): string => {
   const hasher = crypto.createHash("sha256");
@@ -81,387 +86,476 @@ const jwsInputPart = (value: any): string => {
     if (typeof value !== "string") {
       value = JSON.stringify(value) || "";
     }
-    value = new Buffer(value);
+    value = Buffer.from(value);
   }
   return base64url.encode(value);
 };
 
 /// Signed JWS object.
 export interface SignedJws {
-  header: {
-    alg: JwsAlg;
-    jwk: RSA_JWK;
-  };
   protected: string;
   payload: string;
   signature: string;
 }
 
-/// Partial JWS object that contains just content.
-export interface JwsContent {
-  protected: object;
-  payload: object;
-}
-
 /// Create a signed JWS object from an object using RS256.
-/// This function is useful during account key roll-over.
-export const jwsRS256 = (
-  content: JwsContent,
-  privateKey: string,
-  publicKey: string
-): SignedJws => {
-  const protHeader = jwsInputPart(content.protected);
-  const payload = jwsInputPart(content.payload);
+//
+/// This function is used by `request` to sign requests, but can be useful in
+/// specific other cases.
+///
+/// One example is account key rollover, where an inner JWS is added to the
+/// request body. In this case, follow the spec by leaving `nonce` and `kid`
+/// undefined, and setting `url` to `client.resources.keyChange.resourceUrl`.
+/// You can use the `jwk` function to build the `oldKey` payload field.
+///
+/// The `nonce` should only ever be omitted for such inner JWS cases. The JWS
+/// used to sign the request body in ACME always requires a nonce.
+///
+/// If no `kid` is specified, the `jwk` property is added to the protected
+/// header instead. `kid` should be specified for all requests other than
+/// `newAccount` and `revokeCert`.
+export const jwsRS256 = (params: {
+  payload: any;
+  privateKey: KeyLike;
+  kid?: string;
+  url: string;
+  nonce?: string;
+}): SignedJws => {
+  const encProtected = jwsInputPart({
+    alg: "RS256",
+    kid: params.kid,
+    jwk: params.kid ? undefined : jwk(params.privateKey),
+    nonce: params.nonce,
+    url: params.url
+  });
+  const encPayload = jwsInputPart(params.payload);
 
   const signer = crypto.createSign("RSA-SHA256");
-  signer.update(protHeader + "." + payload);
-  const signature = signer.sign(privateKey);
+  signer.update(encProtected + "." + encPayload);
+  const signature = signer.sign(params.privateKey);
 
   return {
-    header: {
-      alg: "RS256",
-      jwk: jwk(publicKey)
-    },
-    protected: protHeader,
-    payload,
+    protected: encProtected,
+    payload: encPayload,
     signature: base64url.encode(signature)
   };
 };
 
-/// Helper: Wrap a request callback to handle JSON.
-/// We cannot use the request `json` flag, because it annoyingly doesn't deal
-/// well with only one side sending JSON. Instead, rely on Content-Type.
-const jsonContentTypes = ["application/json", "application/problem+json"];
-const wrapRequestCallback = (callback: ResponseCallback): ResponseCallback => {
-  return (err, res) => {
-    const contentType = res && res.headers["content-type"];
-    if (contentType && jsonContentTypes.indexOf(contentType) !== -1) {
-      try {
-        res.body = JSON.parse(res.body.toString());
-      } catch (e) {
-        err = e;
-      }
-    }
-    callback(err, res);
-  };
-};
+/// Parameters for simple, unsigned requests.
+export interface SimpleRequestParams {
+  /// Additional headers for the request.
+  headers?: HeadersInit;
 
-/// Helper: Wrap a request callback to handle the nonce header.
-const wrapRequestMethodCallback = (
-  client: Client,
-  callback: ResponseCallback
-): ResponseCallback => {
-  return (err, res) => {
-    if (res) {
-      const nonce = res.headers["replay-nonce"];
-      if (typeof nonce === "string") {
-        client.nonce = nonce;
-      }
-    }
-    callback(err, res);
-  };
-};
-
-/// Parameters for `get`.
-export interface GetParams {
-  /// Optional extra headers.
-  headers?: object;
+  /// Additional `fetch` options.
+  ///
+  /// Note that additional headers should be set using the `headers` parameter,
+  /// not the property inside this object.
+  fetchOptions?: RequestInit;
 }
 
-/// Make a GET API request.
-export const get = (
-  url: string,
-  params: GetParams,
-  callback: ResponseCallback
-): Request => {
-  return request(
-    {
-      method: "GET",
-      url,
-      encoding: null,
-      headers: params.headers
-    },
-    wrapRequestCallback(callback)
-  );
-};
+/// Parameters for (signed) ACME requests.
+export interface RequestParams extends SimpleRequestParams {
+  /// The account RSA private key.
+  ///
+  /// This parameter is required, but has an optional type because client
+  /// defaults can be merged.
+  privateKey?: KeyLike;
 
-/// Parameters for `post`.
-export interface PostParams {
-  /// The account RSA private key in PEM format.
-  privateKey: string;
-  /// The account RSA public key in PEM format.
-  publicKey: string;
-  /// The nonce from an earlier request.
-  nonce: string;
-  /// Optional extra headers.
-  headers?: object;
+  /// The key ID matching the private key.
+  ///
+  /// In ACME, this is the account URL obtained from `newAccount`. For the
+  /// `newAccount` request itself, and for a `revokeCert` request, leave this
+  /// undefined. (You may need to explicitely specify `kid: undefined` in
+  /// request parameters to override your client defaults.)
+  kid?: string;
 }
 
-/// Make a POST API request.
-export const post = (
-  url: string,
-  body: object,
-  params: PostParams,
-  callback: ResponseCallback
-): Request => {
-  const signed = jwsRS256(
-    {
-      protected: { nonce: params.nonce },
-      payload: body
-    },
-    params.privateKey,
-    params.publicKey
-  );
-
-  return request(
-    {
-      method: "POST",
-      url,
-      encoding: null,
-      headers: Object.assign(
-        {
-          "Content-Type": "application/json"
-        },
-        params.headers
-      ),
-      body: new Buffer(JSON.stringify(signed))
-    },
-    wrapRequestCallback(callback)
-  );
-};
+/// Parameters for `request`.
+export interface RequestMethodParams extends RequestParams {
+  /// Optional request body. (Payload of the JWS.)
+  ///
+  /// Leaving this empty performs a 'POST-as-GET' request.
+  body?: object;
+}
 
 /// Parameters for `poll`.
-export interface PollParams {
-  /// Optional extra headers.
-  headers?: object;
+export interface PollMethodParams extends RequestParams {
   /// Optional function invoked on every response.
+  ///
+  /// This can be used for logging, for example.
+  /// It's also valid to call `abort` on the handle from this function.
   onResponse?: (response: Response) => void;
 }
 
 /// Handle returned by `poll`.
-export interface PollHandle {
-  /// Stop polling. (Never fails.)
-  destroy: () => void;
+export interface PollHandle extends Promise<Response> {
+  /// Stop polling.
+  ///
+  /// This can be called at any time, and never fails. If the promise has not
+  /// yet resolved, it never will.
+  abort: () => void;
 }
 
-/// Make GET API requests until the server no longer responsed with `202` and
-/// `Retry-After`.
-export const poll = (
-  url: string,
-  params: PollParams,
-  callback: ResponseCallback
-): PollHandle => {
-  let aborted = false;
+/// Result of `fetchDirectory`.
+export interface Directory {
+  /// Directory metadata returned by the ACME server.
+  meta?: DirectoryMeta;
 
-  // Make one request.
-  const one = () => {
-    if (aborted) {
-      return;
-    }
+  /// An object with `request`-like functions for each directory resource.
+  resources: DirectoryResources;
+}
 
-    get(url, params, (err, res) => {
-      if (aborted) {
-        return;
-      }
-      if (err) {
-        callback(err, res);
-        return;
-      }
+/// Directory metadata returned by the ACME server.
+export interface DirectoryMeta {
+  /// A URL identifying the current terms of service.
+  termsOfService?: string;
 
-      if (params.onResponse) {
-        params.onResponse(res);
-        if (aborted) {
-          return;
-        }
-      }
+  /// URL of the informational website for this ACME server.
+  website?: string;
 
-      const retryAfter = res.headers["retry-after"];
-      if (res.statusCode === 202 && retryAfter) {
-        schedule(retryAfter);
-        return;
-      }
+  /// Hostnames the client may configure in CAA DNS records.
+  caaIdentities?: string[];
 
-      callback(null, res);
-    });
-  };
+  /// Whether `newAccount` requests require `externalAccountBinding`
+  externalAccountRequired?: boolean;
+}
 
-  // Schedule the next request.
-  const schedule = (delayStr: string): void => {
-    let delay: number;
-    if (/^[0-9]+$/.test(delayStr)) {
-      delay = parseFloat(delayStr);
-    } else {
-      delay = Date.parse(delayStr) - Date.now();
-    }
-
-    delay = isFinite(delay) ? Math.max(1000, delay) : 10000;
-
-    setTimeout(one, delay);
-  };
-
-  // Start on the next tick.
-  process.nextTick(one);
-
-  // Return a handle.
-  return {
-    destroy() {
-      aborted = true;
-    }
-  };
-};
-
-/// Signature of a resource function created by `directory`.
+/// Signature of a resource function created by `fetchDirectory`.
 export interface DirectoryResource {
-  url: string;
-  (body: object, params: PostParams, callback: ResponseCallback): Request;
+  /// Original name of the resource.
+  /// (The property name is forced camel-case.)
+  resourceName: string;
+
+  /// URL of the resource.
+  resourceUrl: string;
+
+  /// Request this resource.
+  (params?: RequestParams): Promise<Response>;
 }
 
-/// Result of `directory`: an object with `post`-like functions.
+/// An object with `request`-like functions for each directory resource.
+///
+/// Standardized resources usually present in this directory are:
+///
+///  - newNonce
+///  - newAccount
+///  - newOrder
+///  - newAuthz
+///  - revokeCert
+///  - keyChange
+///
+/// Notably, `newAuth` is optional in the ACME spec, and its presence depends
+/// on the server behavior.
+///
+/// Because this object is essentially a map, instances have no prototype (ie.
+/// do not inherit from `Object`).
 export interface DirectoryResources {
   [resource: string]: DirectoryResource;
 }
 
-/// Callback signature of the `directory` function.
-export type DirectoryCallback = (
-  error: any,
-  result: DirectoryResources
-) => void;
-
 /// The main client class.
 ///
-/// This provides simple wrappers for the exports, merging in client default
-/// parameters, and rotating the nonce.
-export class Client {
-  params: Partial<PostParams>;
+/// While this can be constructed directly, it is usually easier to use
+/// `createClient` instead, which automates fetching the directory.
+///
+/// ACME interactions usually start through calling one of the directory
+/// methods through the `resources` property of this class. You will also
+/// frequently need to follow `Link` headers or similar, which can be done with
+/// the `request` or `poll` methods. Other methods and properties of this class
+/// are more low-level, and less frequently used.
+export class Client implements Directory {
+  /// Default parameters for requests.
+  ///
+  /// You can update this at any time. Notably, you'll usually want to set
+  /// `kid` after a `newAccount` request.
+  params: RequestParams;
+
+  /// The last nonce seen.
   nonce?: string;
+
+  /// Directory metadata returned by the ACME server.
+  ///
+  /// When using `createClient`, this is filled for you. Otherwise, see
+  /// `fetchDirectory` for how to build this.
+  meta?: DirectoryMeta;
+
+  /// An object with `request`-like functions for each directory resource.
+  ///
+  /// When using `createClient`, this is filled for you. Otherwise, see
+  /// `fetchDirectory` for how to build this.
+  resources: DirectoryResources;
 
   /// Create a client instance.
   ///
-  /// Additional params are defaults for requests (Usually `privateKey` and
-  /// `publicKey`.
-  constructor(params: Partial<PostParams>) {
+  /// Default parameters for requests can be provided.
+  constructor(params: RequestParams = {}) {
     this.params = params;
     this.nonce = undefined;
+    this.resources = Object.create(null);
+  }
+
+  /// Request a resource by full URL.
+  ///
+  /// This is usually called with a URL from a `Link` header or similar.
+  async request(
+    url: string,
+    params: RequestMethodParams = {}
+  ): Promise<Response> {
+    const privateKey = params.privateKey || this.params.privateKey;
+    if (!privateKey) {
+      throw TypeError("The privateKey parameter is required");
+    }
+
+    // Get a nonce if needed.
+    if (!this.nonce) {
+      this.nonce = await this.fetchNonce();
+    }
+
+    // Grab and invalidate the nonce.
+    const nonce = this.nonce;
+    this.nonce = undefined;
+
+    // Create the JWS body.
+    const signed = jwsRS256({
+      payload: params.body || "",
+      privateKey,
+      // Make sure the request can override defaults.
+      kid: "kid" in params ? params.kid : this.params.kid,
+      url,
+      nonce
+    });
+
+    // Make the request.
+    const res = await fetch(url, {
+      ...this.params.fetchOptions,
+      ...params.fetchOptions,
+      method: "POST",
+      headers: {
+        ...this.params.headers,
+        ...params.headers,
+        "Content-Type": "application/jose+json"
+      },
+      body: JSON.stringify(signed)
+    });
+
+    // Extract the next nonce.
+    const nextNonce = res.headers.get("Replay-Nonce");
+    if (nextNonce) {
+      this.nonce = nextNonce;
+    }
+
+    return res;
+  }
+
+  /// Poll a resource by full URL.
+  ///
+  /// This is usually called with a URL from a `Link` header or similar. The
+  /// URL is requested (with POST-as-GET requests)  until the server no longer
+  /// responds with `202` and `Retry-After`.
+  ///
+  /// Polling can be aborted by calling `abort` on the returned promise.
+  poll(url: string, params: PollMethodParams = {}): PollHandle {
+    let aborted = false;
+
+    const handle: Promise<Response> = new Promise((resolve, reject) => {
+      // Make one request.
+      const one = async () => {
+        // Check if `abort` was called, especially after a retry delay.
+        if (aborted) {
+          return;
+        }
+
+        // Make the request.
+        let res: Response;
+        try {
+          res = await this.request(url, params);
+          if (aborted) {
+            return;
+          }
+        } catch (err) {
+          if (!aborted) {
+            reject(err);
+          }
+          return;
+        }
+
+        // Call optional response handler.
+        if (params.onResponse) {
+          params.onResponse(res);
+          // The handler may call `abort`.
+          if (aborted) {
+            return;
+          }
+        }
+
+        // Retry later if necessary.
+        const retryAfter = res.headers.get("Retry-After");
+        if (res.status === 202 && retryAfter) {
+          schedule(retryAfter);
+          return;
+        }
+
+        // Otherwise, resolve!
+        resolve(res);
+      };
+
+      // Schedule the next request.
+      const schedule = (delayStr: string): void => {
+        // Parse the `Retry-After` value.
+        let delay: number;
+        if (/^[0-9]+$/.test(delayStr)) {
+          delay = parseFloat(delayStr);
+        } else {
+          delay = Date.parse(delayStr) - Date.now();
+        }
+
+        // Apply a minimum, and apply a default if we couldn't parse.
+        delay = isFinite(delay) ? Math.max(1000, delay) : 10000;
+
+        // Make another request after the delay.
+        setTimeout(one, delay);
+      };
+
+      // Start now.
+      one();
+    });
+
+    // Return a handle.
+    return Object.assign(handle, {
+      abort() {
+        aborted = true;
+      }
+    });
   }
 
   /// Fetch the directory resource.
   ///
-  /// This is usually the first thing to do with a client. The result is an
-  /// object with `post`-like functions, used to call the resources defined in
-  /// the directory.
-  directory(url: string, callback: DirectoryCallback): Request {
-    const resources: DirectoryResources = {};
+  /// When using `createClient`, this is done for you, but otherwise probably
+  /// the first thing you want to do with a client.
+  ///
+  /// `createClient` also sets the `meta` and `resources` properties on the
+  /// client to the return value of this method.
+  async fetchDirectory(
+    url: string,
+    params: SimpleRequestParams = {}
+  ): Promise<Directory> {
+    const res = await fetch(url, {
+      ...this.params.fetchOptions,
+      ...params.fetchOptions,
+      method: "GET",
+      headers: {
+        ...this.params.headers,
+        ...params.headers
+      }
+    });
+    if (res.status !== 200) {
+      throw Error("Could not fetch ACME directory, status code: " + res.status);
+    }
 
-    // Create a function for requesting a resource.
-    const createResource = (name: string, url: string): DirectoryResource => {
-      const resource = (
-        body: object,
-        params: PostParams,
-        callback: ResponseCallback
-      ): Request => {
-        const bodyWithResource = Object.assign(body, { resource: name });
-        return this.post(url, bodyWithResource, params, callback);
+    const resourceMap = await res.json();
+
+    // Extract metadata.
+    let meta: DirectoryMeta | undefined;
+    if (typeof resourceMap.meta === "object") {
+      meta = resourceMap.meta;
+    }
+
+    // Create resource functions.
+    const createResource = (
+      resourceName: string,
+      resourceUrl: string
+    ): DirectoryResource => {
+      const resource = async (
+        params: RequestParams = {}
+      ): Promise<Response> => {
+        return this.request(resourceUrl, params);
       };
-      resource.url = url;
-      return resource;
+      return Object.assign(resource, { resourceName, resourceUrl });
     };
 
-    return this.get(url, {}, (err, res) => {
-      if (!err && res.statusCode !== 200) {
-        err = Error(
-          "Could not fetch ACME directory, status code: " + res.statusCode
+    // Iterate the directory
+    const resources: DirectoryResources = Object.create(null);
+    for (const resourceName of Object.keys(resourceMap)) {
+      const resourceUrl = resourceMap[resourceName];
+      if (typeof resourceUrl !== "string") {
+        continue;
+      }
+
+      // Build resource name as camel-case.
+      const prop = resourceName
+        // `x-y` => `xY`
+        .replace(/[^a-zA-Z0-9]+([a-z])/g, m => m[1].toUpperCase())
+        // `X-Y` => `XY`
+        .replace(/[^a-zA-Z0-9]+/g, "")
+        // `0Y` => `Y`
+        .replace(/^[0-9]+/g, "");
+
+      // Create the resource function.
+      resources[prop] = createResource(resourceName, resourceUrl);
+    }
+
+    return { meta, resources };
+  }
+
+  /// Fetch a new nonce.
+  ///
+  /// This method is called automatically as needed, but it may be useful to
+  /// override in specific cases.
+  ///
+  /// If no `url` is specified, `resources.newNonce.resourceUrl` is used. If
+  /// the resource is not found, an error is thrown.
+  async fetchNonce(
+    url?: string,
+    params: SimpleRequestParams = {}
+  ): Promise<string> {
+    // Default to the `newNonce` url.
+    if (!url) {
+      const { newNonce } = this.resources;
+      if (!newNonce) {
+        throw Error(
+          "Cannot fetch a new nonce: newNonce resource is not defined"
         );
       }
-      if (err) {
-        callback(err, resources);
-        return;
+      url = newNonce.resourceUrl;
+    }
+
+    // Make a `HEAD` request, and extract the nonce.
+    const res = await fetch(url, {
+      ...this.params.fetchOptions,
+      ...params.fetchOptions,
+      method: "HEAD",
+      headers: {
+        ...this.params.headers,
+        ...params.headers
       }
-
-      // Iterate resources in the directory.
-      const resourceMap = res.body;
-      for (const name of Object.keys(resourceMap)) {
-        const url = resourceMap[name];
-
-        // Build resource name as camel-case.
-        const prop = name.replace(/-([a-z])/g, m => m[1].toUpperCase());
-
-        // Create the resource function.
-        resources[prop] = createResource(name, url);
-      }
-
-      // Return.
-      callback(null, resources);
     });
-  }
+    const nonce = res.headers.get("Replay-Nonce");
+    if (!nonce) {
+      throw Error(
+        "Could not fetch a new nonce: Replay-Nonce header missing from response"
+      );
+    }
 
-  /// Make a GET API request.
-  get(url: string, params: GetParams, callback: ResponseCallback): Request {
-    callback = wrapRequestMethodCallback(this, callback);
-    return get(url, params, callback);
-  }
-
-  /// Make a POST API request.
-  post(
-    url: string,
-    body: object,
-    params: PostParams,
-    callback: ResponseCallback
-  ): Request {
-    const combinedParams = Object.assign(
-      {},
-      this.params,
-      { nonce: this.nonce },
-      params
-    );
-
-    callback = wrapRequestMethodCallback(this, callback);
-    return post(url, body, combinedParams, callback);
-  }
-
-  /// Make GET API requests until the server no longer responsed with `202` and
-  /// `Retry-After`.
-  poll(
-    url: string,
-    params: PollParams,
-    callback: ResponseCallback
-  ): PollHandle {
-    callback = wrapRequestMethodCallback(this, callback);
-    return poll(url, params, callback);
+    return nonce;
   }
 }
-
-/// Client interface extension that adds directory resources.
-interface ClientExtResources {
-  /// Resources the ACME service listed in its directory.
-  resources: DirectoryResources;
-}
-
-/// A client that includes directory resources.
-type ClientWithResources = Client & ClientExtResources;
-
-/// Signature of the `createClient` callback.
-type CreateClientCallback = (error: any, client: ClientWithResources) => void;
 
 /// Create a client instance, and fetch the directory.
 ///
-/// The `url` parameter must be a URL to the directory resource.
+/// The `url` parameter must be the full URL to the directory resource.
 ///
-/// Additional params are defaults for requests (Usually `privateKey` and
-/// `publicKey`.
-export const createClient = (
+/// Default parameters can be provided for requests made with the client.
+export const createClient = async (
   url: string,
-  params: Partial<PostParams>,
-  callback: CreateClientCallback
-): void => {
+  params: RequestParams = {}
+): Promise<Client> => {
   const client = new Client(params);
-  client.directory(url, (err, resources) => {
-    callback(err, Object.assign(client, { resources }));
-  });
+  return Object.assign(client, await client.fetchDirectory(url));
 };
 
 /// Production URL of Let's Encrypt's directory resource.
-export const LETSENCRYPT_URL = "https://acme-v01.api.letsencrypt.org/directory";
+export const LETSENCRYPT_URL = "https://acme-v02.api.letsencrypt.org/directory";
 
 /// Staging URL of Let's Encrypt's directory resource.
 export const LETSENCRYPT_STAGING_URL =
-  "https://acme-staging.api.letsencrypt.org/directory";
+  "https://acme-staging-v02.api.letsencrypt.org/directory";

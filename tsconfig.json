@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
-    "target": "es5",
+    "target": "ES2016",
     "module": "commonjs",
-    "lib": ["ES5"],
+    "lib": ["ES2016"],
     "declaration": true,
     "rootDir": "src",
     "outDir": "dist",
