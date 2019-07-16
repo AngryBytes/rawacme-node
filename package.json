@@ -18,11 +18,10 @@
     "request": "^2.69.0"
   },
   "devDependencies": {
-    "eslint": "^2.3.0"
+    "eslint": "^6.0.1"
   },
-  "main": "./index.js",
   "scripts": {
-    "lint": "eslint ."
+    "lint": "eslint *.js"
   },
   "eslintConfig": {
     "extends": "eslint:recommended",
