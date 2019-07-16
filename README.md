@@ -3,7 +3,7 @@
 Rawacme is a ACME / [Let's Encrypt] client that doesn't abstract away protocol
 details, but provides only functions to ease making the ACME API calls.
 
- [Let's Encrypt]: https://letsencrypt.org/
+[let's encrypt]: https://letsencrypt.org/
 
 ### Example
 
