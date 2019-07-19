@@ -6,8 +6,77 @@ import pemjwk, { RSA_JWK } from "pem-jwk";
 /// Re-export of the `base64url` module.
 export const base64 = base64url;
 
+/// Content-Type for a signed body.
+export const CONTENT_TYPE_JOSE_JSON = "application/jose+json";
+/// Content-Type for an ACME error response.
+export const CONTENT_TYPE_PROBLEM_JSON = "application/problem+json";
+
+/// Namespace of ACME errors.
+export const ERROR_NS = "urn:ietf:params:acme:error";
+
+/// The request specified an account that does not exist.
+export const ERROR_ACCOUNT_DOES_NOT_EXIST = `${ERROR_NS}:accountDoesNotExist`;
+/// The request specified a certificate to be revoked that has already been
+/// revoked.
+export const ERROR_ALREADY_REVOKED = `${ERROR_NS}:alreadyRevoked`;
+/// The CSR is unacceptable (e.g., due to a short key.)
+export const ERROR_BAD_CSR = `${ERROR_NS}:badCSR`;
+/// The client sent an unacceptable anti-replay nonce.
+///
+/// Rawacme will automatically handle this error.
+export const ERROR_BAD_NONCE = `${ERROR_NS}:badNonce`;
+/// The JWS was signed by a public key the server does not support.
+export const ERROR_BAD_PUBLIC_KEY = `${ERROR_NS}:badPublicKey`;
+/// The revocation reason provided is not allowed by the server.
+export const ERROR_BAD_REVOCATION_REASON = `${ERROR_NS}:badRevocationReason`;
+/// The JWS was signed with an algorithm the server does not support.
+export const ERROR_BAD_SIGNATURE_ALGORITHM = `${ERROR_NS}:badSignatureAlgorithm`;
+/// Certification Authority Authorization (CAA) records forbid the CA from
+/// issuing a certificate.
+export const ERROR_CAA = `${ERROR_NS}:caa`;
+/// Specific error conditions are indicated in the "subproblems" array
+export const ERROR_COMPOUND = `${ERROR_NS}:compound`;
+/// The server could not connect to validation target
+export const ERROR_CONNECTION = `${ERROR_NS}:connection`;
+/// There was a problem with a DNS query during identifier validation
+export const ERROR_DNS = `${ERROR_NS}:dns`;
+/// The request must include a value for the "externalAccountBinding" field
+export const ERROR_EXTERNAL_ACCOUNT_REQUIRED = `${ERROR_NS}:externalAccountRequired`;
+/// Response received didn't match the challenge's requirements
+export const ERROR_INCORRECT_RESPONSE = `${ERROR_NS}:incorrectResponse`;
+/// A contact URL for an account was invalid
+export const ERROR_INVALID_CONTACT = `${ERROR_NS}:invalidContact`;
+/// The request message was malformed
+export const ERROR_MALFORMED = `${ERROR_NS}:malformed`;
+/// The request attempted to finalize an order that is not ready to be finalized
+export const ERROR_ORDER_NOT_READY = `${ERROR_NS}:orderNotReady`;
+/// The request exceeds a rate limit
+export const ERROR_RATE_LIMITED = `${ERROR_NS}:rateLimited`;
+/// The server will not issue certificates for the identifier
+export const ERROR_REJECTED_IDENTIFIER = `${ERROR_NS}:rejectedIdentifier`;
+/// The server experienced an internal error
+export const ERROR_SERVER_INTERNAL = `${ERROR_NS}:serverInternal`;
+/// The server received a TLS error during validation
+export const ERROR_TLS = `${ERROR_NS}:tls`;
+/// The client lacks sufficient authorization
+export const ERROR_UNAUTHORIZED = `${ERROR_NS}:unauthorized`;
+/// A contact URL for an account used an unsupported protocol scheme
+export const ERROR_UNSUPPORTED_CONTACT = `${ERROR_NS}:unsupportedContact`;
+/// An identifier is of an unsupported type
+export const ERROR_UNSUPPORTED_IDENTIFIER = `${ERROR_NS}:unsupportedIdentifier`;
+/// Visit the "instance" URL and take actions specified there
+export const ERROR_USER_ACTION_REQUIRED = `${ERROR_NS}:userActionRequired`;
+
 /// The types of PEM headers we support.
 export type PemHeader = "RSA PUBLIC KEY" | "RSA PRIVATE KEY" | "CERTIFICATE";
+
+/// Check the response content type, to see if it is an ACME error.
+export const isErrorResponse = (res: Response): boolean => {
+  const type = (res.headers.get("Content-Type") || "")
+    .replace(/;.*$/, "")
+    .trim();
+  return type === CONTENT_TYPE_PROBLEM_JSON;
+};
 
 /// Convert DER buffer to PEM string.
 export const fromDer = (header: PemHeader, der: Buffer): string => {
@@ -333,7 +402,7 @@ export class Client implements Directory {
       headers: {
         ...this.params.headers,
         ...params.headers,
-        "Content-Type": "application/jose+json"
+        "Content-Type": CONTENT_TYPE_JOSE_JSON
       },
       body: JSON.stringify(signed)
     });
@@ -342,6 +411,14 @@ export class Client implements Directory {
     const nextNonce = res.headers.get("Replay-Nonce");
     if (nextNonce) {
       this.nonce = nextNonce;
+    }
+
+    // Check if we need to retry because of a bad nonce.
+    if (res.status === 400 && isErrorResponse(res)) {
+      const body = await res.clone().json();
+      if (body.type === ERROR_BAD_NONCE) {
+        return this.request(url, params);
+      }
     }
 
     return res;
