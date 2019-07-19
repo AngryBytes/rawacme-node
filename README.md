@@ -1,7 +1,13 @@
 # rawacme
 
-Rawacme is a ACME / [Let's Encrypt] client that doesn't abstract away protocol
-details, but provides only functions to ease making the ACME API calls.
+Rawacme is a ACME (v2) / [Let's Encrypt] client that doesn't abstract away
+protocol details, but provides only functions to ease making the ACME API
+calls:
+
+- Fetch API-like interface to perform signed POST and POST-as-GET requests.
+- Polling method that handles 202 / `Retry-After` responses.
+- Automatic nonce handling, with retries.
+- ACME directory parsing.
 
 [let's encrypt]: https://letsencrypt.org/
 
@@ -12,16 +18,17 @@ const rawacme = require('rawacme');
 
 // Create a client for the Let's Encrypt staging environment.
 const client = await rawacme.createClient(rawacme.LETSENCRYPT_STAGING_URL, {
-  // Account keypair as PEM strings
-  publicKey: /* ... */,
+  // Account private key, as PEM or KeyObject.
   privateKey: /* ... */
 });
 
 // Directory resources are available as methods on `client.resources`.
 // For example, to create an account:
 const res = await client.resources.newAccount({
-  termsOfServiceAgreed: true,
-  contact: ["mailto:john@example.com"]
+  body: {
+    termsOfServiceAgreed: true,
+    contact: ["mailto:john@example.com"]
+  }
 });
 
 // Other times, you may need to request a non-directory URL.
@@ -45,7 +52,7 @@ Also see [./test.js] for more examples.
 For testing, use Pebble: https://github.com/letsencrypt/pebble
 
 The included [./test.js] script should work as-is when starting Pebble with
-`docker-compose`, as outlined in the README there.
+`docker-compose up`, as outlined in the README there.
 
 ### License
 

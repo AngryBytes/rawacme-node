@@ -1,7 +1,7 @@
 {
   "name": "rawacme",
-  "version": "0.2.1",
-  "description": "Library for making raw ACME requests",
+  "version": "0.3.0",
+  "description": "Library for making raw ACME (v2) requests",
   "authors": "Angry Bytes <info@angrybytes.com>",
   "license": "MIT",
   "keywords": [
@@ -13,6 +13,7 @@
     "url": "git@github.com:AngryBytes/rawacme-node.git"
   },
   "main": "dist/index.js",
+  "types": "dist/index.d.js",
   "dependencies": {
     "base64url": "^3.0.1",
     "cross-fetch": "^3.0.4",
@@ -28,6 +29,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc -w",
-    "fmt": "prettier --write ./src/*.ts ./*.{js,json,md}"
+    "fmt": "prettier --write ./src/*.ts ./*.{js,json,md}",
+    "prepublish": "tsc"
   }
 }
