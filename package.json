@@ -30,6 +30,6 @@
     "build": "tsc",
     "watch": "tsc -w",
     "fmt": "prettier --write ./src/*.ts ./*.{js,json,md}",
-    "prepublish": "tsc"
+    "prepare": "tsc"
   }
 }
