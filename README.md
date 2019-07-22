@@ -5,7 +5,7 @@ protocol details, but provides only functions to ease making the ACME API
 calls:
 
 - Fetch API-like interface to perform signed POST and POST-as-GET requests.
-- Polling method that handles 202 / `Retry-After` responses.
+- Polling method that handles `Retry-After` responses.
 - Automatic nonce handling, with retries.
 - ACME directory parsing.
 
@@ -14,7 +14,8 @@ calls:
 ### Example
 
 ```js
-const rawacme = require('rawacme');
+const assert = require("assert");
+const rawacme = require("rawacme");
 
 // Create a client for the Let's Encrypt staging environment.
 const client = await rawacme.createClient(rawacme.LETSENCRYPT_STAGING_URL, {
@@ -37,9 +38,14 @@ const res = await client.request(url, {
   body: { /* ... */ }
 });
 
-// For POST-as-GET requests that can return `202` with `Retry-After`, the
-// `poll` method keeps retrying until the response settles.
-const res = client.poll(url);
+// For POST-as-GET requests that can return `Retry-After`, the `poll` method
+// keeps retrying until the response settles.
+const res = client.poll(url, {
+  checkResponse: async res => {
+    assert.equal(res.status, 200);
+    return (await res.clone().json()).status === "valid";
+  }
+});
 ```
 
 All of the above responses are `Response` instances from the Fetch API,

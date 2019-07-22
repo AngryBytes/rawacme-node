@@ -1,5 +1,5 @@
 import base64url from "base64url";
-import crypto, { KeyLike } from "crypto";
+import crypto, { KeyLike, KeyObject } from "crypto";
 import fetch from "cross-fetch";
 import pemjwk, { RSA_JWK } from "pem-jwk";
 
@@ -70,12 +70,41 @@ export const ERROR_USER_ACTION_REQUIRED = `${ERROR_NS}:userActionRequired`;
 /// The types of PEM headers we support.
 export type PemHeader = "RSA PUBLIC KEY" | "RSA PRIVATE KEY" | "CERTIFICATE";
 
+/// Convert any kind of `KeyLike` to a public key `KeyObject`.
+export const toPublicKey = (key: KeyLike): KeyObject => {
+  return key instanceof KeyObject && key.type === "public"
+    ? key
+    : crypto.createPublicKey(key);
+};
+
 /// Check the response content type, to see if it is an ACME error.
 export const isErrorResponse = (res: Response): boolean => {
   const type = (res.headers.get("Content-Type") || "")
     .replace(/;.*$/, "")
     .trim();
   return type === CONTENT_TYPE_PROBLEM_JSON;
+};
+
+/// Parse the 'Retry-After' header into a delay (ms), or use a default.
+export const parseRetryDelay = (
+  res: Response,
+  options: { default?: number; minimum?: number } = {}
+): number => {
+  let delay = NaN;
+
+  const input = res.headers.get("Retry-After");
+  if (input) {
+    if (/^[0-9]+$/.test(input)) {
+      delay = parseFloat(input);
+    } else {
+      delay = Date.parse(input) - Date.now();
+    }
+  }
+
+  // Apply a minimum, and apply a default if we couldn't parse.
+  return isFinite(delay)
+    ? Math.max(options.minimum || 1000, delay)
+    : options.default || 10000;
 };
 
 /// Convert DER buffer to PEM string.
@@ -107,7 +136,7 @@ export const toDer = (pem: string): Buffer => {
 
 /// Create a JWK public key object from an RSA public or private key.
 export const jwk = (key: KeyLike): RSA_JWK => {
-  const publicKey = crypto.createPublicKey(key);
+  const publicKey = toPublicKey(key);
   const pem = publicKey.export({ format: "pem", type: "pkcs1" });
   return pemjwk.pem2jwk(<string>pem);
 };
@@ -116,7 +145,7 @@ export const jwk = (key: KeyLike): RSA_JWK => {
 ///
 /// This function is useful for responding to challenges.
 export const jwkThumbprint = (key: KeyLike): Buffer => {
-  const publicKey = crypto.createPublicKey(key);
+  const publicKey = toPublicKey(key);
   if (publicKey.asymmetricKeyType !== "rsa") {
     throw Error("Only RSA keys are supported");
   }
@@ -249,11 +278,15 @@ export interface RequestMethodParams extends RequestParams {
 
 /// Parameters for `poll`.
 export interface PollMethodParams extends RequestParams {
-  /// Optional function invoked on every response.
+  /// Function invoked on every response to check if the response is final.
   ///
-  /// This can be used for logging, for example.
-  /// It's also valid to call `abort` on the handle from this function.
-  onResponse?: (response: Response) => void;
+  /// Return `true` here to stop polling. The return value of the `poll` method
+  /// will then be this response.
+  ///
+  /// It's also valid to throw from this function (rejects the `poll` promise)
+  /// or call `abort` on the handle from this function (abandons the `poll`
+  /// promise).
+  checkResponse: (response: Response) => Promise<boolean>;
 }
 
 /// Handle returned by `poll`.
@@ -427,11 +460,11 @@ export class Client implements Directory {
   /// Poll a resource by full URL.
   ///
   /// This is usually called with a URL from a `Link` header or similar. The
-  /// URL is requested (with POST-as-GET requests)  until the server no longer
-  /// responds with `202` and `Retry-After`.
+  /// URL is requested (with POST-as-GET requests) until the `checkResponse`
+  /// function returns `true`.
   ///
   /// Polling can be aborted by calling `abort` on the returned promise.
-  poll(url: string, params: PollMethodParams = {}): PollHandle {
+  poll(url: string, params: PollMethodParams): PollHandle {
     let aborted = false;
 
     const handle: Promise<Response> = new Promise((resolve, reject) => {
@@ -456,41 +489,22 @@ export class Client implements Directory {
           return;
         }
 
-        // Call optional response handler.
-        if (params.onResponse) {
-          params.onResponse(res);
-          // The handler may call `abort`.
-          if (aborted) {
-            return;
+        // Check if this is the final response.
+        try {
+          if (await params.checkResponse(res)) {
+            return resolve(res);
           }
+        } catch (err) {
+          return reject(err);
         }
 
-        // Retry later if necessary.
-        const retryAfter = res.headers.get("Retry-After");
-        if (res.status === 202 && retryAfter) {
-          schedule(retryAfter);
+        // The callback may call `abort`.
+        if (aborted) {
           return;
         }
 
-        // Otherwise, resolve!
-        resolve(res);
-      };
-
-      // Schedule the next request.
-      const schedule = (delayStr: string): void => {
-        // Parse the `Retry-After` value.
-        let delay: number;
-        if (/^[0-9]+$/.test(delayStr)) {
-          delay = parseFloat(delayStr);
-        } else {
-          delay = Date.parse(delayStr) - Date.now();
-        }
-
-        // Apply a minimum, and apply a default if we couldn't parse.
-        delay = isFinite(delay) ? Math.max(1000, delay) : 10000;
-
         // Make another request after the delay.
-        setTimeout(one, delay);
+        setTimeout(one, parseRetryDelay(res));
       };
 
       // Start now.
