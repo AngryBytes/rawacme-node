@@ -51,14 +51,16 @@ const res = client.poll(url, {
 All of the above responses are `Response` instances from the Fetch API,
 documented at: https://developer.mozilla.org/en-US/docs/Web/API/Response
 
-Also see [./test.js] for more examples.
+Also see [test.js] for more examples.
 
 ### Testing
 
 For testing, use Pebble: https://github.com/letsencrypt/pebble
 
-The included [./test.js] script should work as-is when starting Pebble with
-`docker-compose up`, as outlined in the README there.
+The included [test.js] script should work as-is when starting Pebble with
+`docker-compose up`, as outlined in its README.
+
+[test.js]: ./test.js
 
 ### License
 
