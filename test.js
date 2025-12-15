@@ -12,15 +12,15 @@ const PEBBLE_DIR = "https://localhost:14000/dir";
 // agent that doesn't verify certificates.
 const agent = new https.Agent({
   keepAlive: true,
-  rejectUnauthorized: false
+  rejectUnauthorized: false,
 });
 
 // Logging helpers.
 const log = (...args) => console.log(...args);
-const step = title => log(`\n\x1b[1m - ${title}\x1b[0m`);
+const step = (title) => log(`\n\x1b[1m - ${title}\x1b[0m`);
 
 // Small helper to validate every response.
-const checkResponse = async res => {
+const checkResponse = async (res) => {
   log(`${res.status} ${res.statusText}`);
   for (const [name, value] of res.headers) {
     log(`${name}: ${value}`);
@@ -43,14 +43,14 @@ const main = async () => {
     // somewhere on disk. Note that only RSA keys are supported currently.
     step("Generating a private key...");
     const { privateKey } = crypto.generateKeyPairSync("rsa", {
-      modulusLength: 2048
+      modulusLength: 2048,
     });
     log(privateKey.export({ format: "pem", type: "pkcs1" }));
 
     step("Fetching the directory...");
     client = await rawacme.createClient(PEBBLE_DIR, {
       privateKey,
-      fetchOptions: { agent }
+      fetchOptions: { agent },
     });
 
     // Dump the directory.
@@ -66,8 +66,8 @@ const main = async () => {
     const res = await client.resources.newAccount({
       body: {
         termsOfServiceAgreed: true,
-        contact: ["mailto:john@example.com"]
-      }
+        contact: ["mailto:john@example.com"],
+      },
     });
     await checkResponse(res);
 
@@ -93,7 +93,7 @@ const main = async () => {
 
     step("Generating a second private key...");
     const { privateKey: newKey } = crypto.generateKeyPairSync("rsa", {
-      modulusLength: 2048
+      modulusLength: 2048,
     });
     log(newKey.export({ format: "pem", type: "pkcs1" }));
 
@@ -102,11 +102,11 @@ const main = async () => {
       body: rawacme.jwsRS256({
         payload: {
           account: client.params.kid,
-          oldKey: rawacme.jwk(oldKey)
+          oldKey: rawacme.jwk(oldKey),
         },
         privateKey: newKey,
-        url: client.resources.keyChange.resourceUrl
-      })
+        url: client.resources.keyChange.resourceUrl,
+      }),
     });
     await checkResponse(res);
 
@@ -124,7 +124,7 @@ const main = async () => {
   step("Done.");
 };
 
-main().catch(err => {
+main().catch((err) => {
   console.error(err);
   process.exit(1);
 });

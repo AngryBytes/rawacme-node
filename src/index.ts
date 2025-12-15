@@ -1,6 +1,5 @@
 import base64url from "base64url";
 import crypto, { KeyLike, KeyObject } from "crypto";
-import fetch from "cross-fetch";
 import pemjwk, { RSA_JWK } from "pem-jwk";
 
 /** Re-export of the `base64url` module. */
@@ -118,7 +117,7 @@ export const isErrorResponse = (res: Response): boolean => {
 /** Parse the 'Retry-After' header into a delay (ms), or use a default. */
 export const parseRetryDelay = (
   res: Response,
-  options: { default?: number; minimum?: number } = {}
+  options: { default?: number; minimum?: number } = {},
 ): number => {
   let delay = NaN;
 
@@ -157,8 +156,8 @@ export const fromDer = (header: PemHeader, der: Buffer): string => {
 export const toDer = (pem: string): Buffer => {
   const base64 = pem
     .split(/[\r\n]+/g)
-    .map(line => line.trim())
-    .filter(line => line)
+    .map((line) => line.trim())
+    .filter((line) => line)
     .slice(1, -1)
     .join("");
   return Buffer.from(base64, "base64");
@@ -262,7 +261,7 @@ export const jwsRS256 = (params: {
     kid: params.kid,
     jwk: params.kid ? undefined : jwk(params.privateKey),
     nonce: params.nonce,
-    url: params.url
+    url: params.url,
   });
   const encPayload = jwsInputPart(params.payload);
 
@@ -273,14 +272,14 @@ export const jwsRS256 = (params: {
   return {
     protected: encProtected,
     payload: encPayload,
-    signature: base64url.encode(signature)
+    signature: base64url.encode(signature),
   };
 };
 
 /** Parameters for simple, unsigned requests. */
 export interface SimpleRequestParams {
   /** Additional headers for the request. */
-  headers?: HeadersInit;
+  headers?: RequestInit["headers"];
 
   /**
    * Additional `fetch` options.
@@ -470,7 +469,7 @@ export class Client implements Directory {
    */
   async request(
     url: string,
-    params: RequestMethodParams = {}
+    params: RequestMethodParams = {},
   ): Promise<Response> {
     const privateKey = params.privateKey || this.params.privateKey;
     if (!privateKey) {
@@ -493,7 +492,7 @@ export class Client implements Directory {
       // Make sure the request can override defaults.
       kid: "kid" in params ? params.kid : this.params.kid,
       url,
-      nonce
+      nonce,
     });
 
     // Make the request.
@@ -504,9 +503,9 @@ export class Client implements Directory {
       headers: {
         ...this.params.headers,
         ...params.headers,
-        "Content-Type": CONTENT_TYPE_JOSE_JSON
+        "Content-Type": CONTENT_TYPE_JOSE_JSON,
       },
-      body: JSON.stringify(signed)
+      body: JSON.stringify(signed),
     });
 
     // Extract the next nonce.
@@ -517,8 +516,8 @@ export class Client implements Directory {
 
     // Check if we need to retry because of a bad nonce.
     if (res.status === 400 && isErrorResponse(res)) {
-      const body = await res.clone().json();
-      if (body.type === ERROR_BAD_NONCE) {
+      const body: any = await res.clone().json();
+      if (body?.type === ERROR_BAD_NONCE) {
         return this.request(url, params);
       }
     }
@@ -586,7 +585,7 @@ export class Client implements Directory {
     return Object.assign(handle, {
       abort() {
         aborted = true;
-      }
+      },
     });
   }
 
@@ -601,7 +600,7 @@ export class Client implements Directory {
    */
   async fetchDirectory(
     url: string,
-    params: SimpleRequestParams = {}
+    params: SimpleRequestParams = {},
   ): Promise<Directory> {
     const res = await fetch(url, {
       ...this.params.fetchOptions,
@@ -609,28 +608,28 @@ export class Client implements Directory {
       method: "GET",
       headers: {
         ...this.params.headers,
-        ...params.headers
-      }
+        ...params.headers,
+      },
     });
     if (res.status !== 200) {
       throw Error("Could not fetch ACME directory, status code: " + res.status);
     }
 
-    const resourceMap = await res.json();
+    const resourceMap: any = await res.json();
 
     // Extract metadata.
     let meta: DirectoryMeta | undefined;
-    if (typeof resourceMap.meta === "object") {
+    if (typeof resourceMap?.meta === "object") {
       meta = resourceMap.meta;
     }
 
     // Create resource functions.
     const createResource = (
       resourceName: string,
-      resourceUrl: string
+      resourceUrl: string,
     ): DirectoryResource => {
       const resource = async (
-        params: RequestParams = {}
+        params: RequestParams = {},
       ): Promise<Response> => {
         return this.request(resourceUrl, params);
       };
@@ -648,7 +647,7 @@ export class Client implements Directory {
       // Build resource name as camel-case.
       const prop = resourceName
         // `x-y` => `xY`
-        .replace(/[^a-zA-Z0-9]+([a-z])/g, m => m[1].toUpperCase())
+        .replace(/[^a-zA-Z0-9]+([a-z])/g, (m) => m[1].toUpperCase())
         // `X-Y` => `XY`
         .replace(/[^a-zA-Z0-9]+/g, "")
         // `0Y` => `Y`
@@ -671,14 +670,14 @@ export class Client implements Directory {
    */
   async fetchNonce(
     url?: string,
-    params: SimpleRequestParams = {}
+    params: SimpleRequestParams = {},
   ): Promise<string> {
     // Default to the `newNonce` url.
     if (!url) {
       const { newNonce } = this.resources;
       if (!newNonce) {
         throw Error(
-          "Cannot fetch a new nonce: newNonce resource is not defined"
+          "Cannot fetch a new nonce: newNonce resource is not defined",
         );
       }
       url = newNonce.resourceUrl;
@@ -691,13 +690,13 @@ export class Client implements Directory {
       method: "HEAD",
       headers: {
         ...this.params.headers,
-        ...params.headers
-      }
+        ...params.headers,
+      },
     });
     const nonce = res.headers.get("Replay-Nonce");
     if (!nonce) {
       throw Error(
-        "Could not fetch a new nonce: Replay-Nonce header missing from response"
+        "Could not fetch a new nonce: Replay-Nonce header missing from response",
       );
     }
 
@@ -714,7 +713,7 @@ export class Client implements Directory {
  */
 export const createClient = async (
   url: string,
-  params: RequestParams = {}
+  params: RequestParams = {},
 ): Promise<Client> => {
   const client = new Client(params);
   return Object.assign(client, await client.fetchDirectory(url));
