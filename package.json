@@ -15,11 +15,11 @@
   "main": "dist/index.js",
   "types": "dist/index.d.js",
   "dependencies": {
-    "base64url": "3.0.1",
-    "pem-jwk": "2.0.0"
+    "base64url": "^3.0.1",
+    "pem-jwk": "^2.0.0"
   },
   "devDependencies": {
-    "@types/node": "24.10.4",
+    "@types/node": "24.10.8",
     "@types/pem-jwk": "2.0.2",
     "@types/request": "2.48.13",
     "prettier": "3.7.4",
