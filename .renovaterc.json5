@@ -1,0 +1,10 @@
+{
+  packageRules: [
+    // Don't pin library dependencies.
+    {
+      matchManagers: ["npm"],
+      matchDepTypes: ["dependencies"],
+      rangeStrategy: "replace",
+    },
+  ],
+}
